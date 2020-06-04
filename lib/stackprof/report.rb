@@ -582,31 +582,41 @@ module StackProf
       raise ArgumentError, "cannot combine #{modeline} with #{other.modeline}" unless modeline == other.modeline
       raise ArgumentError, "cannot combine v#{version} with v#{other.version}" unless version == other.version
 
-      f1, f2 = normalized_frames, other.normalized_frames
-      frames = (f1.keys + f2.keys).uniq.inject(Hash.new) do |hash, id|
-        if f1[id].nil?
-          hash[id] = f2[id]
-        elsif f2[id]
-          hash[id] = f1[id]
-          hash[id][:total_samples] += f2[id][:total_samples]
-          hash[id][:samples] += f2[id][:samples]
-          if f2[id][:edges]
-            edges = hash[id][:edges] ||= {}
-            f2[id][:edges].each do |edge, weight|
-              edges[edge] ||= 0
-              edges[edge] += weight
-            end
-          end
-          if f2[id][:lines]
-            lines = hash[id][:lines] ||= {}
-            f2[id][:lines].each do |line, weight|
-              lines[line] = add_lines(lines[line], weight)
-            end
-          end
-        else
-          hash[id] = f1[id]
+      normalizer = Normalizer.new
+      f1, f2 = @data[:frames], other.data[:frames]
+
+      out = {}
+
+      next_frame_id = 0
+      frame_lookup = Hash.new { |h, k| h[k] = (next_frame_id += 1) }
+
+      [f1, f2].each do |frames|
+        frame_map = frames.transform_values do |frame|
+          frame_lookup[[frame[:name], frame[:file], frame[:line]]]
         end
-        hash
+
+        frames.each do |old_id, frame|
+          frame_id = frame_map[old_id]
+          edges = (frame[:edges] || {}).transform_keys {|k| frame_map[k] }
+
+          if out_frame = out[frame_id]
+            out_frame[:total_samples] += frame[:total_samples]
+            out_frame[:samples] += frame[:samples]
+
+            out_frame[:edges].update(edges) do |a, b|
+              a + b
+            end
+
+            if frame[:lines]
+              lines = out_frame[:lines] ||= {}
+              frame[:lines].each do |line, weight|
+                lines[line] = add_lines(lines[line], weight)
+              end
+            end
+          else
+            out[frame_id] = frame.merge(edges: edges)
+          end
+        end
       end
 
       d1, d2 = data, other.data
@@ -617,7 +627,7 @@ module StackProf
         samples: d1[:samples] + d2[:samples],
         gc_samples: d1[:gc_samples] + d2[:gc_samples],
         missed_samples: d1[:missed_samples] + d2[:missed_samples],
-        frames: frames
+        frames: out
       }
 
       self.class.new(data)
