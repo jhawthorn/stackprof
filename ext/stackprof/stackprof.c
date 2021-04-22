@@ -629,9 +629,9 @@ stackprof_signal_handler(int sig, siginfo_t *sinfo, void *ucontext)
 	    _stackprof.unrecorded_gc_sweeping_samples++;
 	}
 	_stackprof.unrecorded_gc_samples++;
-	rb_postponed_job_register_one(0, stackprof_gc_job_handler, (void*)0);
+	stackprof_gc_job_handler(0);
     } else {
-	rb_postponed_job_register_one(0, stackprof_job_handler, (void*)0);
+	stackprof_job_handler(0);
     }
 }
 
