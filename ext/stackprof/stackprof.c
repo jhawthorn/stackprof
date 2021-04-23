@@ -596,43 +596,37 @@ stackprof_record_gc_samples()
 static void
 stackprof_gc_job_handler(void *data)
 {
-    static int in_signal_handler = 0;
-    if (in_signal_handler) return;
     if (!_stackprof.running) return;
 
-    in_signal_handler++;
     stackprof_record_gc_samples();
-    in_signal_handler--;
-}
-
-static void
-stackprof_job_handler(void *data)
-{
-    static int in_signal_handler = 0;
-    if (in_signal_handler) return;
-    if (!_stackprof.running) return;
-
-    in_signal_handler++;
-    stackprof_record_sample();
-    in_signal_handler--;
 }
 
 static void
 stackprof_signal_handler(int sig, siginfo_t *sinfo, void *ucontext)
 {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
     _stackprof.overall_signals++;
+
+    if (!_stackprof.running) return;
+    if (!ruby_native_thread_p()) return;
+    if (pthread_mutex_trylock(&lock)) return;
+
     if (!_stackprof.ignore_gc && rb_during_gc()) {
-	VALUE mode = rb_gc_latest_gc_info(sym_state);
-	if (mode == sym_marking) {
-	    _stackprof.unrecorded_gc_marking_samples++;
-	} else if (mode == sym_sweeping) {
-	    _stackprof.unrecorded_gc_sweeping_samples++;
-	}
-	_stackprof.unrecorded_gc_samples++;
-	stackprof_gc_job_handler(0);
+        VALUE mode = rb_gc_latest_gc_info(sym_state);
+        if (mode == sym_marking) {
+            _stackprof.unrecorded_gc_marking_samples++;
+        } else if (mode == sym_sweeping) {
+            _stackprof.unrecorded_gc_sweeping_samples++;
+        }
+        _stackprof.unrecorded_gc_samples++;
+        stackprof_gc_job_handler(0);
     } else {
-	stackprof_job_handler(0);
+        stackprof_record_sample();
     }
+    pthread_mutex_unlock(&lock);
+
+    return;
 }
 
 static void
@@ -641,7 +635,7 @@ stackprof_newobj_handler(VALUE tpval, void *data)
     _stackprof.overall_signals++;
     if (RTEST(_stackprof.interval) && _stackprof.overall_signals % NUM2LONG(_stackprof.interval))
 	return;
-    stackprof_job_handler(0);
+    stackprof_record_sample();
 }
 
 static VALUE
@@ -651,7 +645,7 @@ stackprof_sample(VALUE self)
 	return Qfalse;
 
     _stackprof.overall_signals++;
-    stackprof_job_handler(0);
+    stackprof_record_sample();
     return Qtrue;
 }
 
